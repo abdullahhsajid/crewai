@@ -2,7 +2,6 @@ from openai import OpenAI
 import os
 from fastapi import FastAPI, HTTPException
 from datetime import datetime
-from dotenv import load_dotenv
 import yaml
 import json
 import logging
@@ -10,7 +9,6 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-load_dotenv()
 os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 os.environ["OPENAI_MODEL_NAME"] = os.getenv("MODEL", "gpt-4")
 
