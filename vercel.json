@@ -3,10 +3,7 @@
     "builds": [
         {
             "src":"main.py",
-            "use":"@vercel/python",
-            "config": {
-                "maxLambdaSize": "500mb"
-            }
+            "use":"@vercel/python"
         }
     ],
     "routes":[
