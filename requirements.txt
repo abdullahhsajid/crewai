@@ -1,3 +1,6 @@
 fastapi
 uvicorn
-crewai
+python-dotenv
+PyGithub
+pyyaml
+openai
