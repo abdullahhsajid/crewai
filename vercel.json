@@ -12,10 +12,10 @@
             "dest":"main.py"
         }
     ],
-    "cron":[
+    "crons":[
         {
             "path":"api/cron.py",
-            "schedule":"37 18 * * *"
+            "schedule":"38 18 * * *"
         }
     ]
 }
