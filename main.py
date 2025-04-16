@@ -12,13 +12,11 @@ from github import Github
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-
 # Verify environment variables
-if not os.getenv("OPENAI_API_KEY"):
-    raise ValueError("OPENAI_API_KEY is not set")
-if not os.getenv("GIT_TOKEN"):
-    raise ValueError("GIT_TOKEN is not set")
+for var in ["OPENAI_API_KEY", "GIT_TOKEN"]:
+    if not os.getenv(var):
+        logger.error(f"{var} not set")
+        raise ValueError(f"{var} not set")
 
 app = FastAPI(title="Crew AI Bot API", description="API to run Crew AI Bot", version="1.0.0")
 
@@ -32,20 +30,19 @@ def research_topic(topic, current_year):
         raise ValueError("Current year must be a valid number")
 
     prompt = f"""
-    Imagine you are a skilled researcher specializing in {topic}. Provide a concise summary of key developments in {topic} for {current_year}, focusing on:
-    1. Notable innovations or advancements.
-    2. Emerging trends shaping the field.
-    3. Interesting statistics or findings.
-    4. Predictions for future growth or changes.
-    5. Examples of practical applications or impact.
-
-    Return the response as a list of 10 bullet points. Ensure the information is clear, engaging, and suitable for a blog post. If specific data is unavailable, provide plausible insights based on general knowledge up to {current_year}.
+    You are an expert in {topic}. Summarize key developments in {topic} for {current_year} in 10 concise bullet points, focusing on:
+    - Recent innovations.
+    - Current trends.
+    - Notable statistics.
+    - Future predictions.
+    - Practical applications.
+    Keep each bullet point brief (1-2 sentences). Base insights on general knowledge up to {current_year}.
     """
     try:
         response = client.chat.completions.create(
-            model=os.getenv("MODEL", "gpt-4o-mini"),
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=1000,
+            max_tokens=500,
             temperature=0.7
         )
         content = response.choices[0].message.content.strip()
@@ -58,33 +55,32 @@ def research_topic(topic, current_year):
 
 def write_blog_post(topic, research_output, author_name, author_picture_url, cover_image_url, current_date_iso):
     prompt = f"""
-    Based on the following research about {topic}, write a compelling and informative blog post in plain Markdown format.
-    The blog post MUST start with the following frontmatter (using single quotes for string values) and MUST NOT be enclosed in code blocks:
+    Using the research below, write a concise blog post about {topic} in Markdown format.
+    Start with this frontmatter (use single quotes):
     
     ---
-    title: '(A catchy title based on the research)'
+    title: '(Catchy title based on research)'
     status: 'published'
     author:
       name: '{author_name}'
       picture: '{author_picture_url}'
-    slug: '(A URL-friendly version of the title)'
-    description: '(A brief summary of the blog post)'
+    slug: '(URL-friendly title)'
+    description: '(One-sentence summary)'
     coverImage: '{cover_image_url}'
-    category: '(A relevant category for the topic)'
+    category: '{topic}'
     publishedAt: '{current_date_iso}'
     ---
     
-    The main content should follow immediately after the frontmatter, without code blocks.
-    Use the research to fill in the title, slug, description, and category.
+    The content should be engaging, 3-4 paragraphs, and directly follow the frontmatter without code blocks.
     
     Research:
     {research_output}
     """
     try:
         response = client.chat.completions.create(
-            model=os.getenv("MODEL", "gpt-4o-mini"),
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000,
+            max_tokens=1000,
             temperature=0.7
         )
         content = response.choices[0].message.content.strip()
@@ -98,99 +94,90 @@ def write_blog_post(topic, research_output, author_name, author_picture_url, cov
 def git_push_callback(task_output):
     pat = os.getenv("GIT_TOKEN")
     if not pat:
-        logger.error("GIT_TOKEN environment variable is not set")
-        raise ValueError("GIT_TOKEN environment variable is not set")
+        logger.error("GIT_TOKEN not set")
+        raise ValueError("GIT_TOKEN not set")
 
     g = Github(pat)
     repo = g.get_repo("abdullahhsajid/bmd-portfolio")
 
     original_file = os.path.join(os.getcwd(), 'report.md')
     if not os.path.exists(original_file):
-        logger.error(f"Report file does not exist: {original_file}")
-        raise FileNotFoundError(f"Report file does not exist: {original_file}")
+        logger.error(f"Report file missing: {original_file}")
+        raise FileNotFoundError(f"Report file missing: {original_file}")
 
-    def process_file(file_path):
-        with open(file_path, 'r') as f:
-            content = f.read()
+    with open(original_file, 'r') as f:
+        content = f.read().strip()
 
-        cleaned_content = content.strip()
-        if cleaned_content.startswith('```markdown') or cleaned_content.startswith('```'):
-            start_idx = cleaned_content.index('\n') + 1 if '\n' in cleaned_content else len(cleaned_content)
-            end_idx = cleaned_content.rfind('```') if '```' in cleaned_content else len(cleaned_content)
-            cleaned_content = cleaned_content[start_idx:end_idx].strip()
+    # Process frontmatter
+    metadata = {}
+    if content.startswith('---'):
+        frontmatter_end = content.index('---', 3)
+        frontmatter = content[3:frontmatter_end].strip()
+        metadata = yaml.safe_load(frontmatter)
+        slug = metadata.get('slug', 'default-slug')
+    else:
+        slug = 'default-slug'
 
-        metadata = {}
-        if cleaned_content.startswith('---'):
-            frontmatter_end = cleaned_content.index('---', 3)
-            frontmatter = cleaned_content[3:frontmatter_end].strip()
-            metadata = yaml.safe_load(frontmatter)
-            slug = metadata.get('slug', 'default-slug')
-        else:
-            slug = 'default-slug'
-
-        with open(file_path, 'w') as f:
-            f.write(cleaned_content)
-
-        return slug, metadata, cleaned_content
-
-    def update_metadata_json(metadata):
-        metadata_json = {"metadata": []}
-        try:
-            metadata_file = repo.get_contents("outstatic/content/metadata.json")
-            metadata_json = json.loads(metadata_file.decoded_content.decode())
-        except:
-            logger.info("metadata.json not found, creating new one")
-
-        new_entry = {
-            "category": metadata.get('category', 'Uncategorized'),
-            "collection": "blogs",
-            "coverImage": metadata.get('coverImage', ''),
-            "description": metadata.get('description', ''),
-            "publishedAt": metadata.get('publishedAt', ''),
-            "slug": metadata.get('slug', 'default-slug'),
-            "status": metadata.get('status', 'draft'),
-            "title": metadata.get('title', 'Untitled'),
-            "path": f"outstatic/content/blogs/{metadata.get('slug', 'default-slug')}.md",
-            "author": {
-                "name": metadata.get('author', {}).get('name', ''),
-                "picture": metadata.get('author', {}).get('picture', '')
-            },
-            "__outstatic": {
-                "path": f"outstatic/content/blogs/{metadata.get('slug', 'default-slug')}.md",
-            }
-        }
-        metadata_json['metadata'].append(new_entry)
-
-        try:
-            repo.update_file(
-                "outstatic/content/metadata.json",
-                "Update metadata.json with new blog entry",
-                json.dumps(metadata_json, indent=2),
-                metadata_file.sha
-            )
-        except:
-            repo.create_file(
-                "outstatic/content/metadata.json",
-                "Create metadata.json with new blog entry",
-                json.dumps(metadata_json, indent=2)
-            )
-
-    slug, metadata, content = process_file(original_file)
     new_filename = f"{slug}.md"
 
+    # Push blog post
     try:
         repo.create_file(
             f"outstatic/content/blogs/{new_filename}",
-            f"Add {new_filename} to outstatic/content/blogs",
+            f"Add {new_filename}",
             content
         )
     except Exception as e:
         logger.error(f"Failed to push blog post: {str(e)}")
-        raise RuntimeError(f"Failed to push blog post to repository: {str(e)}")
+        raise RuntimeError(f"Failed to push blog post: {str(e)}")
 
-    update_metadata_json(metadata)
+    # Update metadata.json
+    metadata_json = {"metadata": []}
+    try:
+        metadata_file = repo.get_contents("outstatic/content/metadata.json")
+        metadata_json = json.loads(metadata_file.decoded_content.decode())
+    except:
+        logger.info("metadata.json not found, creating new")
 
-    return "Successfully pushed blog post to GitHub repository"
+    new_entry = {
+        "category": metadata.get('category', 'Uncategorized'),
+        "collection": "blogs",
+        "coverImage": metadata.get('coverImage', ''),
+        "description": metadata.get('description', ''),
+        "publishedAt": metadata.get('publishedAt', ''),
+        "slug": slug,
+        "status": metadata.get('status', 'draft'),
+        "title": metadata.get('title', 'Untitled'),
+        "path": f"outstatic/content/blogs/{slug}.md",
+        "author": {
+            "name": metadata.get('author', {}).get('name', ''),
+            "picture": metadata.get('author', {}).get('picture', '')
+        },
+        "__outstatic": {
+            "path": f"outstatic/content/blogs/{slug}.md"
+        }
+    }
+    metadata_json['metadata'].append(new_entry)
+
+    try:
+        if 'metadata_file' in locals():
+            repo.update_file(
+                "outstatic/content/metadata.json",
+                "Update metadata.json",
+                json.dumps(metadata_json, indent=2),
+                metadata_file.sha
+            )
+        else:
+            repo.create_file(
+                "outstatic/content/metadata.json",
+                "Create metadata.json",
+                json.dumps(metadata_json, indent=2)
+            )
+    except Exception as e:
+        logger.error(f"Failed to update metadata.json: {str(e)}")
+        raise RuntimeError(f"Failed to update metadata.json: {str(e)}")
+
+    return "Successfully pushed blog post"
 
 @app.get("/")
 async def root():
@@ -202,7 +189,7 @@ async def run_agent(inputs: dict):
         # Validate inputs
         required_fields = ['topic', 'author_name', 'author_picture_url', 'cover_image_url']
         for field in required_fields:
-            if field not in inputs or not inputs[field]:
+            if field not in inputs or not inputs[field] or not str(inputs[field]).strip():
                 raise ValueError(f"Missing or empty field: {field}")
 
         current_datetime_iso = datetime.now().isoformat() + "Z"
@@ -214,13 +201,13 @@ async def run_agent(inputs: dict):
 
         # Perform research
         research_output = research_topic(topic, current_year)
-        logger.info(f"Research output: {research_output}")
+        logger.info(f"Research output length: {len(research_output)} chars")
 
         # Write blog post
         blog_content = write_blog_post(
             topic, research_output, author_name, author_picture_url, cover_image_url, current_datetime_iso
         )
-        logger.info(f"Blog content generated")
+        logger.info(f"Blog content length: {len(blog_content)} chars")
 
         # Save to report.md
         with open('report.md', 'w') as f:
