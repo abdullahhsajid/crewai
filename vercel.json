@@ -14,8 +14,8 @@
     ],
     "crons":[
         {
-            "path":"api/cron.py",
-            "schedule":"38 18 * * *"
+            "path":"/api/cron.py",
+            "schedule":"39 18 * * *"
         }
     ]
 }
