@@ -1,12 +1,12 @@
 import os
 from datetime import datetime
 from fastapi import FastAPI, HTTPException
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 
-load_dotenv()
+# load_dotenv()
 
-os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
-os.environ["OPENAI_MODEL_NAME"] = os.getenv("OPENAI_MODEL_NAME")
+# os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+# os.environ["OPENAI_MODEL_NAME"] = os.getenv("OPENAI_MODEL_NAME")
 
 app = FastAPI(title="Crew AI Bot API", description="API to run Crew AI Bot", version="1.0.0")
 
