@@ -2,17 +2,16 @@ import os
 import yaml
 import json
 import logging
+import time
 from fastapi import FastAPI, HTTPException
 from datetime import datetime
 from openai import OpenAI
 from github import Github
 
-
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Verify environment variables
+
 for var in ["OPENAI_API_KEY", "GIT_TOKEN"]:
     if not os.getenv(var):
         logger.error(f"{var} not set")
@@ -20,46 +19,51 @@ for var in ["OPENAI_API_KEY", "GIT_TOKEN"]:
 
 app = FastAPI(title="Crew AI Bot API", description="API to run Crew AI Bot", version="1.0.0")
 
-# Initialize OpenAI client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def research_topic(topic, current_year):
     if not topic or not topic.strip():
-        raise ValueError("Topic cannot be empty or blank")
+        raise ValueError("Topic cannot be empty")
     if not current_year.isdigit():
-        raise ValueError("Current year must be a valid number")
+        raise ValueError("Current year must be a number")
 
     prompt = f"""
-    You are an expert in {topic}. Summarize key developments in {topic} for {current_year} in 10 concise bullet points, focusing on:
-    - Recent innovations.
-    - Current trends.
-    - Notable statistics.
-    - Future predictions.
-    - Practical applications.
-    Keep each bullet point brief (1-2 sentences). Base insights on general knowledge up to {current_year}.
+    Summarize key developments in {topic} for {current_year} in 8 short bullet points:
+    - Recent innovations (1 sentence).
+    - Current trends (1 sentence).
+    - Key statistics (1 sentence).
+    - Future predictions (1 sentence).
+    - Practical applications (1 sentence).
+    - Notable challenge (1 sentence).
+    - Industry impact (1 sentence).
+    - Emerging opportunity (1 sentence).
+    Keep it concise, max 30 words per bullet.
     """
+    start_time = time.time()
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=500,
+            max_tokens=300,
             temperature=0.7
         )
         content = response.choices[0].message.content.strip()
         if not content:
-            raise ValueError("Empty response from OpenAI API")
+            raise ValueError("Empty OpenAI response")
+        logger.info(f"Research took {time.time() - start_time:.2f} seconds")
         return content
     except Exception as e:
-        logger.error(f"OpenAI API error: {str(e)}")
-        raise RuntimeError(f"Failed to generate research output: {str(e)}")
+        logger.error(f"OpenAI error: {str(e)}")
+        raise RuntimeError(f"Research failed: {str(e)}")
 
 def write_blog_post(topic, research_output, author_name, author_picture_url, cover_image_url, current_date_iso):
     prompt = f"""
-    Using the research below, write a concise blog post about {topic} in Markdown format.
-    Start with this frontmatter (use single quotes):
+    Write a short blog post about {topic} in Markdown, using this research:
+    {research_output}
+    Start with this frontmatter (single quotes):
     
     ---
-    title: '(Catchy title based on research)'
+    title: '(Catchy title)'
     status: 'published'
     author:
       name: '{author_name}'
@@ -71,27 +75,27 @@ def write_blog_post(topic, research_output, author_name, author_picture_url, cov
     publishedAt: '{current_date_iso}'
     ---
     
-    The content should be engaging, 3-4 paragraphs, and directly follow the frontmatter without code blocks.
-    
-    Research:
-    {research_output}
+    Content: 2-3 paragraphs, max 200 words total, no code blocks.
     """
+    start_time = time.time()
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=1000,
+            max_tokens=600,
             temperature=0.7
         )
         content = response.choices[0].message.content.strip()
         if not content:
-            raise ValueError("Empty response from OpenAI API")
+            raise ValueError("Empty OpenAI response")
+        logger.info(f"Blog post took {time.time() - start_time:.2f} seconds")
         return content
     except Exception as e:
-        logger.error(f"OpenAI API error: {str(e)}")
-        raise RuntimeError(f"Failed to generate blog post: {str(e)}")
+        logger.error(f"OpenAI error: {str(e)}")
+        raise RuntimeError(f"Blog post failed: {str(e)}")
 
 def git_push_callback(task_output):
+    start_time = time.time()
     pat = os.getenv("GIT_TOKEN")
     if not pat:
         logger.error("GIT_TOKEN not set")
@@ -103,24 +107,19 @@ def git_push_callback(task_output):
     original_file = os.path.join(os.getcwd(), 'report.md')
     if not os.path.exists(original_file):
         logger.error(f"Report file missing: {original_file}")
-        raise FileNotFoundError(f"Report file missing: {original_file}")
+        raise FileNotFoundError(f"Report file missing")
 
     with open(original_file, 'r') as f:
         content = f.read().strip()
 
-    # Process frontmatter
     metadata = {}
     if content.startswith('---'):
         frontmatter_end = content.index('---', 3)
         frontmatter = content[3:frontmatter_end].strip()
-        metadata = yaml.safe_load(frontmatter)
-        slug = metadata.get('slug', 'default-slug')
-    else:
-        slug = 'default-slug'
-
+        metadata = yaml.safe_load(frontmatter) or {}
+    slug = metadata.get('slug', 'default-slug')
     new_filename = f"{slug}.md"
 
-    # Push blog post
     try:
         repo.create_file(
             f"outstatic/content/blogs/{new_filename}",
@@ -128,16 +127,15 @@ def git_push_callback(task_output):
             content
         )
     except Exception as e:
-        logger.error(f"Failed to push blog post: {str(e)}")
-        raise RuntimeError(f"Failed to push blog post: {str(e)}")
+        logger.error(f"Push failed: {str(e)}")
+        raise RuntimeError(f"Push failed: {str(e)}")
 
-    # Update metadata.json
     metadata_json = {"metadata": []}
     try:
         metadata_file = repo.get_contents("outstatic/content/metadata.json")
         metadata_json = json.loads(metadata_file.decoded_content.decode())
     except:
-        logger.info("metadata.json not found, creating new")
+        logger.info("metadata.json not found")
 
     new_entry = {
         "category": metadata.get('category', 'Uncategorized'),
@@ -163,20 +161,21 @@ def git_push_callback(task_output):
         if 'metadata_file' in locals():
             repo.update_file(
                 "outstatic/content/metadata.json",
-                "Update metadata.json",
+                "Update metadata",
                 json.dumps(metadata_json, indent=2),
                 metadata_file.sha
             )
         else:
             repo.create_file(
                 "outstatic/content/metadata.json",
-                "Create metadata.json",
+                "Create metadata",
                 json.dumps(metadata_json, indent=2)
             )
     except Exception as e:
-        logger.error(f"Failed to update metadata.json: {str(e)}")
-        raise RuntimeError(f"Failed to update metadata.json: {str(e)}")
+        logger.error(f"Metadata update failed: {str(e)}")
+        raise RuntimeError(f"Metadata update failed: {str(e)}")
 
+    logger.info(f"Git push took {time.time() - start_time:.2f} seconds")
     return "Successfully pushed blog post"
 
 @app.get("/")
@@ -185,12 +184,12 @@ async def root():
 
 @app.post("/run-agent")
 async def run_agent(inputs: dict):
+    start_time = time.time()
     try:
-        # Validate inputs
         required_fields = ['topic', 'author_name', 'author_picture_url', 'cover_image_url']
         for field in required_fields:
             if field not in inputs or not inputs[field] or not str(inputs[field]).strip():
-                raise ValueError(f"Missing or empty field: {field}")
+                raise ValueError(f"Missing field: {field}")
 
         current_datetime_iso = datetime.now().isoformat() + "Z"
         topic = inputs['topic'].strip()
@@ -199,23 +198,22 @@ async def run_agent(inputs: dict):
         author_picture_url = inputs['author_picture_url']
         cover_image_url = inputs['cover_image_url']
 
-        # Perform research
         research_output = research_topic(topic, current_year)
         logger.info(f"Research output length: {len(research_output)} chars")
 
-        # Write blog post
         blog_content = write_blog_post(
             topic, research_output, author_name, author_picture_url, cover_image_url, current_datetime_iso
         )
         logger.info(f"Blog content length: {len(blog_content)} chars")
 
-        # Save to report.md
         with open('report.md', 'w') as f:
             f.write(blog_content)
+        logger.info(f"File write took {time.time() - start_time:.2f} seconds so far")
 
-        # Push to GitHub
         result = git_push_callback(None)
-        return {"result": result}
+        total_time = time.time() - start_time
+        logger.info(f"Total execution took {total_time:.2f} seconds")
+        return {"result": result, "execution_time": total_time}
     except Exception as e:
         logger.error(f"API error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
