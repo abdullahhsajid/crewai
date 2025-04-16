@@ -1,43 +1,60 @@
-from openai import OpenAI
 import os
-from fastapi import FastAPI, HTTPException
-from datetime import datetime
 import yaml
 import json
 import logging
+from fastapi import FastAPI, HTTPException
+from datetime import datetime
+from openai import OpenAI
+from github import Github
 
+
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
-os.environ["OPENAI_MODEL_NAME"] = os.getenv("MODEL", "gpt-4")
+
+
+# Verify environment variables
+if not os.getenv("OPENAI_API_KEY"):
+    raise ValueError("OPENAI_API_KEY is not set")
+if not os.getenv("GIT_TOKEN"):
+    raise ValueError("GIT_TOKEN is not set")
 
 app = FastAPI(title="Crew AI Bot API", description="API to run Crew AI Bot", version="1.0.0")
 
+# Initialize OpenAI client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def research_topic(topic, current_year):
+    if not topic or not topic.strip():
+        raise ValueError("Topic cannot be empty or blank")
+    if not current_year.isdigit():
+        raise ValueError("Current year must be a valid number")
+
     prompt = f"""
-    Conduct a comprehensive investigation into {topic}, focusing specifically on:
-    1. The latest breakthroughs and innovations since {current_year}
-    2. Major trends reshaping this field in {current_year}
-    3. Surprising statistics or data points that challenge conventional wisdom
-    4. Expert predictions for future developments
-    5. Practical applications or real-world impact stories
-    
-    Prioritize high-credibility sources and emerging research that hasn't yet reached mainstream awareness.
-    Look beyond obvious information to uncover unique insights that would genuinely interest and surprise readers.
-    Consider contrasting perspectives and identify significant debates or controversies among experts in {current_year}.
-    Ensure all findings are timely and relevant as of {current_year}, with emphasis on developments within the last 6 months.
-    
-    Return a list with 10 bullet points of the most relevant information.
+    Imagine you are a skilled researcher specializing in {topic}. Provide a concise summary of key developments in {topic} for {current_year}, focusing on:
+    1. Notable innovations or advancements.
+    2. Emerging trends shaping the field.
+    3. Interesting statistics or findings.
+    4. Predictions for future growth or changes.
+    5. Examples of practical applications or impact.
+
+    Return the response as a list of 10 bullet points. Ensure the information is clear, engaging, and suitable for a blog post. If specific data is unavailable, provide plausible insights based on general knowledge up to {current_year}.
     """
-    response = client.chat.completions.create(
-        model=os.getenv("OPENAI_MODEL_NAME"),
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=1000
-    )
-    return response.choices[0].message.content
+    try:
+        response = client.chat.completions.create(
+            model=os.getenv("MODEL", "gpt-4o-mini"),
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=1000,
+            temperature=0.7
+        )
+        content = response.choices[0].message.content.strip()
+        if not content:
+            raise ValueError("Empty response from OpenAI API")
+        return content
+    except Exception as e:
+        logger.error(f"OpenAI API error: {str(e)}")
+        raise RuntimeError(f"Failed to generate research output: {str(e)}")
 
 def write_blog_post(topic, research_output, author_name, author_picture_url, cover_image_url, current_date_iso):
     prompt = f"""
@@ -63,15 +80,20 @@ def write_blog_post(topic, research_output, author_name, author_picture_url, cov
     Research:
     {research_output}
     """
-    response = client.chat.completions.create(
-        model=os.getenv("OPENAI_MODEL_NAME"),
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=2000
-    )
-    return response.choices[0].message.content
-
-# GitHub API for pushing files (avoids cloning)
-from github import Github
+    try:
+        response = client.chat.completions.create(
+            model=os.getenv("MODEL", "gpt-4o-mini"),
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=2000,
+            temperature=0.7
+        )
+        content = response.choices[0].message.content.strip()
+        if not content:
+            raise ValueError("Empty response from OpenAI API")
+        return content
+    except Exception as e:
+        logger.error(f"OpenAI API error: {str(e)}")
+        raise RuntimeError(f"Failed to generate blog post: {str(e)}")
 
 def git_push_callback(task_output):
     pat = os.getenv("GIT_TOKEN")
@@ -177,8 +199,14 @@ async def root():
 @app.post("/run-agent")
 async def run_agent(inputs: dict):
     try:
+        # Validate inputs
+        required_fields = ['topic', 'author_name', 'author_picture_url', 'cover_image_url']
+        for field in required_fields:
+            if field not in inputs or not inputs[field]:
+                raise ValueError(f"Missing or empty field: {field}")
+
         current_datetime_iso = datetime.now().isoformat() + "Z"
-        topic = inputs['topic']
+        topic = inputs['topic'].strip()
         current_year = str(datetime.now().year)
         author_name = inputs['author_name']
         author_picture_url = inputs['author_picture_url']
