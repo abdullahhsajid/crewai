@@ -286,7 +286,8 @@ async def root():
 
 @app.get("/run-agent")
 async def trigger_event():
-    asyncio.create_task(run_agent())
+    loop = asyncio.get_running_loop()
+    loop.create_task(run_agent())
     return {"message": "Agent is running in the background"}
 
 
