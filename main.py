@@ -11,7 +11,6 @@ import random
 from dotenv import load_dotenv
 from vercel_blob import put
 import requests
-import asyncio
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -286,12 +285,11 @@ async def root():
 
 @app.get("/run-agent")
 async def trigger_event():
-    loop = asyncio.get_running_loop()
-    loop.create_task(run_agent())
+    run_agent()
     return {"message": "Agent is running in the background"}
 
 
-async def run_agent():
+def run_agent():
     start_time = time.time()
     try:
         selected_category, title = select_category_and_title()

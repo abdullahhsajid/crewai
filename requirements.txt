@@ -6,4 +6,3 @@ pyyaml
 openai
 vercel_blob
 requests
-asyncio
