@@ -3,23 +3,29 @@ import yaml
 import json
 import logging
 import time
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from datetime import datetime
 from openai import OpenAI
 from github import Github
+import random
+from dotenv import load_dotenv
+from vercel_blob import put
+import requests
+import asyncio
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+load_dotenv()
 
-for var in ["OPENAI_API_KEY", "GIT_TOKEN"]:
+for var in ["OPENAI_API_KEY", "GIT_TOKEN","BLOB_READ_WRITE_TOKEN"]:
     if not os.getenv(var):
         logger.error(f"{var} not set")
         raise ValueError(f"{var} not set")
 
 app = FastAPI(title="Crew AI Bot API", description="API to run Crew AI Bot", version="1.0.0")
-
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 
 def research_topic(topic, current_year):
     if not topic or not topic.strip():
@@ -55,6 +61,69 @@ def research_topic(topic, current_year):
     except Exception as e:
         logger.error(f"OpenAI error: {str(e)}")
         raise RuntimeError(f"Research failed: {str(e)}")
+
+
+def generate_image_prompt(topic,title,research_output):
+    prompt = f"""
+    Create a prompt for an image based on the blog post titled '{title}' in the category '{topic}'.
+    Use this research: {research_output}
+    The image should be visually striking, modern, and relevant (e.g., futuristic AI for AI category, blockchain nodes for Web3).
+    Keep the prompt concise, max 20 words.
+    """
+    start_time = time.time()
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=50,
+            temperature=0.7
+        )
+        content = response.choices[0].message.content.strip()
+        if not content:
+            raise ValueError("Empty image prompt response")
+        logger.info(f"Image prompt generation took {time.time() - start_time:.2f} seconds")
+        return content
+    except Exception as e:
+        logger.error(f"Image prompt generation error: {str(e)}")
+        raise RuntimeError(f"Image prompt generation failed: {str(e)}")
+
+
+def generate_and_upload_image(image_prompt, title):
+    start_time = time.time()
+    try:
+        logger.info(f"Generating image with prompt: {image_prompt}")
+        # Generate image with DALL·E 3
+        response = client.images.generate(
+            model="dall-e-3",
+            prompt=image_prompt,
+            size="1024x1024",  # Use supported size; resize later if needed
+            quality="standard",
+            n=1
+        )
+        image_url = response.data[0].url
+        logger.info(f"Generated image URL: {image_url}")
+
+        # Download image
+        image_response = requests.get(image_url, timeout=10)
+        image_response.raise_for_status()
+        image_data = image_response.content
+
+        # Upload to Vercel Blob
+        blob_filename = f"images/{title.lower().replace(' ', '-')}-{int(time.time())}.png"
+        blob_response = put(blob_filename, image_data, {"access": "public", "contentType": "image/png"})
+        blob_url = blob_response['url']  # Extract only the URL
+        logger.info(f"Uploaded image response: {blob_response}")
+        logger.info(f"Using image URL: {blob_url}")
+
+        logger.info(f"Image generation and upload took {time.time() - start_time:.2f} seconds")
+        return blob_url
+    except Exception as e:
+        logger.error(f"Image generation/upload error: {str(e)}")
+        # Fallback to placeholder image
+        placeholder_url = "https://example.com/placeholder.jpg"
+        logger.info(f"Using placeholder image: {placeholder_url}")
+        return placeholder_url
+
 
 def write_blog_post(topic, research_output, author_name, author_picture_url, cover_image_url, current_date_iso):
     prompt = f"""
@@ -93,6 +162,7 @@ def write_blog_post(topic, research_output, author_name, author_picture_url, cov
     except Exception as e:
         logger.error(f"OpenAI error: {str(e)}")
         raise RuntimeError(f"Blog post failed: {str(e)}")
+
 
 def git_push_callback(task_output):
     start_time = time.time()
@@ -178,28 +248,73 @@ def git_push_callback(task_output):
     logger.info(f"Git push took {time.time() - start_time:.2f} seconds")
     return "Successfully pushed blog post"
 
+
+def select_category_and_title():
+    categories = [
+        "AI", "Web3", "Blockchain Fusion", "Startups", "Tech Culture",
+        "Tools & Reviews", "How-Tos", "Editorials", "AGI"
+    ]
+    selected_category = random.choice(categories)
+    
+    prompt = f"""
+    Generate a catchy blog post title for the category '{selected_category}'.
+    Focus on recent trends or innovations (e.g., AI breakthroughs, Web3 scalability, AGI ethics).
+    Keep it concise, max 10 words.
+    """
+    start_time = time.time()
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=50,
+            temperature=0.7
+        )
+        title = response.choices[0].message.content.strip()
+        if not title:
+            raise ValueError("Empty title response")
+        logger.info(f"Title generation took {time.time() - start_time:.2f} seconds")
+        return selected_category, title
+    except Exception as e:
+        logger.error(f"Title generation error: {str(e)}")
+        raise RuntimeError(f"Title generation failed: {str(e)}")
+
+
 @app.get("/")
 async def root():
     return {"message": "Crew AI Bot API is running"}
 
-@app.post("/run-agent")
-async def run_agent(inputs: dict):
+
+@app.get("/run-agent")
+async def trigger_event():
+    asyncio.create_task(run_agent())
+    return {"message": "Agent is running in the background"}
+
+
+async def run_agent():
     start_time = time.time()
     try:
-        required_fields = ['topic', 'author_name', 'author_picture_url', 'cover_image_url']
-        for field in required_fields:
-            if field not in inputs or not inputs[field] or not str(inputs[field]).strip():
-                raise ValueError(f"Missing field: {field}")
+        selected_category, title = select_category_and_title()
+        topic = title
+        logger.info(f"Selected category: {selected_category}, Title: {title}")
+
+        # required_fields = ['topic', 'author_name', 'author_picture_url']
+        # for field in required_fields:
+        #     if field not in inputs or not inputs[field] or not str(inputs[field]).strip():
+        #         raise ValueError(f"Missing field: {field}")
 
         current_datetime_iso = datetime.now().isoformat() + "Z"
-        topic = inputs['topic'].strip()
+        topic = topic.strip()
         current_year = str(datetime.now().year)
-        author_name = inputs['author_name']
-        author_picture_url = inputs['author_picture_url']
-        cover_image_url = inputs['cover_image_url']
+        author_name = "Abdullah Sajid"
+        author_picture_url = "https://avatars.githubusercontent.com/u/176460407?v=4"
+        cover_image_url = "https://avatars.githubusercontent.com/u/176460407?v=4"
 
         research_output = research_topic(topic, current_year)
         logger.info(f"Research output length: {len(research_output)} chars")
+
+        image_prompt = generate_image_prompt(topic, title, research_output)
+        logger.info(f"Image prompt: {image_prompt}")
+        cover_image_url = generate_and_upload_image(image_prompt, title)
 
         blog_content = write_blog_post(
             topic, research_output, author_name, author_picture_url, cover_image_url, current_datetime_iso
@@ -217,6 +332,7 @@ async def run_agent(inputs: dict):
     except Exception as e:
         logger.error(f"API error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     import uvicorn
