@@ -288,6 +288,9 @@ async def trigger_event():
     run_agent()
     return {"message": "Agent is running in the background"}
 
+@app.get("/api/cron")
+async def run_cron():
+    return {"message": "Cron job executed successfully"}  
 
 def run_agent():
     start_time = time.time()
