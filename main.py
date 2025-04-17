@@ -3,7 +3,7 @@ import yaml
 import json
 import logging
 import time
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from datetime import datetime
 from openai import OpenAI
 from github import Github
