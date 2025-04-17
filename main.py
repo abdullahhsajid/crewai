@@ -172,13 +172,13 @@ def git_push_callback(task_output):
 
     g = Github(pat)
     repo = g.get_repo("abdullahhsajid/bmd-portfolio")
-
-    original_file = os.path.join(os.getcwd(), 'report.md')
-    if not os.path.exists(original_file):
-        logger.error(f"Report file missing: {original_file}")
+    
+    report_file = "/tmp/report.md"
+    if not os.path.exists(report_file):
+        logger.error(f"Report file missing: {report_file}")
         raise FileNotFoundError(f"Report file missing")
 
-    with open(original_file, 'r') as f:
+    with open(report_file, 'r') as f:
         content = f.read().strip()
 
     metadata = {}
@@ -319,8 +319,9 @@ def run_agent():
             topic, research_output, author_name, author_picture_url, cover_image_url, current_datetime_iso
         )
         logger.info(f"Blog content length: {len(blog_content)} chars")
-
-        with open('report.md', 'w') as f:
+        
+        report_file = "/tmp/report.md"
+        with open(report_file, 'w') as f:
             f.write(blog_content)
         logger.info(f"File write took {time.time() - start_time:.2f} seconds so far")
 
