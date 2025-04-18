@@ -280,7 +280,7 @@ def select_category_and_title():
 
 @app.get("/")
 async def root():
-    return {"message": "Crew AI Bot API is running"}
+    return {"message": "Blog Agent API is running"}
 
 
 @app.get("/run-agent")
