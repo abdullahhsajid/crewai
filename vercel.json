@@ -15,7 +15,7 @@
     "crons":[
         {
             "path":"/run-agent",
-            "schedule":"39 18 * * *"
+            "schedule":"0 */6 * * *"
         }
     ]
 }
